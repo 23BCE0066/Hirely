@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { motion } from 'motion/react';
 import { X, Send, Video, Phone } from 'lucide-react';
-import { db } from '../firebase';
-import { doc, onSnapshot, updateDoc, arrayUnion } from 'firebase/firestore';
 import { Message, Application, UserProfile } from '../types';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -11,22 +9,28 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+// localStorage helpers for chat messages
+function getChatMessages(applicationId: string): Message[] {
+  try {
+    const data = localStorage.getItem(`hirely_messages_${applicationId}`);
+    return data ? JSON.parse(data) : [];
+  } catch { return []; }
+}
+
+function saveChatMessages(applicationId: string, messages: Message[]) {
+  localStorage.setItem(`hirely_messages_${applicationId}`, JSON.stringify(messages));
+}
+
 export const ChatModal = ({ application, currentUser, onClose }: { application: Application, currentUser: UserProfile, onClose: () => void }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const appRef = doc(db, 'applications', application.id);
-    const unsubscribe = onSnapshot(appRef, (docSnapshot) => {
-      if (docSnapshot.exists()) {
-        const appData = docSnapshot.data() as Application;
-        setMessages(appData.messages || []);
-        setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-      }
-    });
-
-    return () => unsubscribe();
+    // Load messages from localStorage
+    const stored = getChatMessages(application.id);
+    setMessages(stored);
+    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
   }, [application.id]);
 
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -41,15 +45,11 @@ export const ChatModal = ({ application, currentUser, onClose }: { application: 
       timestamp: Date.now()
     };
 
-    try {
-      await updateDoc(doc(db, 'applications', application.id), {
-        messages: arrayUnion(msg)
-      });
-      setNewMessage('');
-    } catch (error) {
-      console.error("Error sending message:", error);
-      alert("Failed to send message. Please check permissions.");
-    }
+    const updated = [...messages, msg];
+    setMessages(updated);
+    saveChatMessages(application.id, updated);
+    setNewMessage('');
+    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
   };
 
   const handleVideoCallRequest = async () => {
@@ -67,29 +67,17 @@ export const ChatModal = ({ application, currentUser, onClose }: { application: 
       videoCallUrl: meetUrl
     };
 
-    try {
-      await updateDoc(doc(db, 'applications', application.id), {
-        messages: arrayUnion(msg)
-      });
-    } catch (error) {
-      console.error("Error sending video call request:", error);
-      alert("Failed to send request.");
-    }
+    const updated = [...messages, msg];
+    setMessages(updated);
+    saveChatMessages(application.id, updated);
   };
 
   const updateVideoCallStatus = async (messageId: string, status: 'accepted' | 'rejected') => {
     const updatedMessages = messages.map(msg => 
       msg.id === messageId ? { ...msg, videoCallStatus: status } : msg
     );
-    
-    try {
-      await updateDoc(doc(db, 'applications', application.id), {
-        messages: updatedMessages
-      });
-    } catch (error) {
-      console.error("Error updating video call status:", error);
-      alert("Failed to update status.");
-    }
+    setMessages(updatedMessages);
+    saveChatMessages(application.id, updatedMessages);
   };
 
   return (

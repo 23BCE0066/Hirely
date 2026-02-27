@@ -11,7 +11,7 @@ export interface Job {
   logo: string;
   aiMatchScore?: number;
   employerId?: string;
-  documentUrl?: string; // Added for Firebase Storage
+  documentUrl?: string;
   isExternal?: boolean; // Added for external API
   externalUrl?: string; // Added for external API
 }
@@ -49,7 +49,7 @@ export interface Application {
   candidateEmail: string;
   appliedAt: number;
   status: 'pending' | 'reviewed' | 'accepted' | 'rejected' | 'on_hold';
-  resumeUrl?: string; // Added for Firebase Storage
+  resumeUrl?: string;
   messages?: Message[];
 }
 
