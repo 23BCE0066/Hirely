@@ -47,13 +47,45 @@ app.get('/api/db/jobs', async (_req, res) => {
     try {
         const { data, error } = await supabase.from('jobs').select('*').order('created_at', { ascending: false });
         if (error) throw error;
-        res.json(data || []);
+        // Map snake_case (DB) to CamelCase (Frontend)
+        const jobs = (data || []).map(db => ({
+            id: db.id,
+            title: db.title,
+            company: db.company,
+            location: db.location,
+            type: db.type,
+            salary: db.salary,
+            category: db.category,
+            description: db.description,
+            employerId: db.employer_id,
+            postedAt: db.posted_at,
+            logo: db.logo,
+            documentUrl: db.document_url,
+            isExternal: false
+        }));
+        res.json(jobs);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/db/jobs', async (req, res) => {
     try {
-        const { error } = await supabase.from('jobs').upsert(req.body);
+        const job = req.body;
+        // Map CamelCase (Frontend) to snake_case (DB)
+        const dbJob = {
+            id: job.id,
+            title: job.title,
+            company: job.company,
+            location: job.location,
+            type: job.type,
+            salary: job.salary,
+            category: job.category,
+            description: job.description,
+            employer_id: job.employerId,
+            posted_at: job.postedAt,
+            logo: job.logo,
+            document_url: job.documentUrl
+        };
+        const { error } = await supabase.from('jobs').upsert(dbJob);
         if (error) throw error;
         res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -72,13 +104,38 @@ app.get('/api/db/applications', async (_req, res) => {
     try {
         const { data, error } = await supabase.from('applications').select('*').order('applied_at', { ascending: false });
         if (error) throw error;
-        res.json(data || []);
+        // Map snake_case (DB) to CamelCase (Frontend)
+        const apps = (data || []).map(db => ({
+            id: db.id,
+            jobId: db.job_id,
+            employerId: db.employer_id,
+            candidateId: db.candidate_id,
+            candidateName: db.candidate_name,
+            candidateEmail: db.candidate_email,
+            appliedAt: Number(db.applied_at),
+            status: db.status,
+            resumeUrl: db.resume_url
+        }));
+        res.json(apps);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/db/applications', async (req, res) => {
     try {
-        const { error } = await supabase.from('applications').upsert(req.body);
+        const app = req.body;
+        // Map CamelCase (Frontend) to snake_case (DB)
+        const dbApp = {
+            id: app.id,
+            job_id: app.jobId,
+            employer_id: app.employerId,
+            candidate_id: app.candidateId,
+            candidate_name: app.candidateName,
+            candidate_email: app.candidateEmail,
+            applied_at: app.appliedAt,
+            status: app.status,
+            resume_url: app.resumeUrl
+        };
+        const { error } = await supabase.from('applications').upsert(dbApp);
         if (error) throw error;
         res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -86,7 +143,11 @@ app.post('/api/db/applications', async (req, res) => {
 
 app.put('/api/db/applications/:id', async (req, res) => {
     try {
-        const { error } = await supabase.from('applications').update(req.body).eq('id', req.params.id);
+        const update: any = {};
+        if (req.body.status) update.status = req.body.status;
+        if (req.body.resumeUrl) update.resume_url = req.body.resumeUrl;
+
+        const { error } = await supabase.from('applications').update(update).eq('id', req.params.id);
         if (error) throw error;
         res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -126,15 +187,28 @@ app.get('/api/db/messages/:appId', async (req, res) => {
             .eq('application_id', req.params.appId)
             .order('timestamp', { ascending: true });
         if (error) throw error;
-        res.json(data || []);
+        // Map snake_case to CamelCase
+        const msgs = (data || []).map(db => ({
+            id: db.id,
+            applicationId: db.application_id,
+            senderId: db.sender_id,
+            content: db.content,
+            timestamp: Number(db.timestamp),
+            isAi: db.is_ai
+        }));
+        res.json(msgs);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/db/messages/:appId', async (req, res) => {
     try {
+        const msg = req.body;
         const { error } = await supabase.from('messages').insert({
             application_id: req.params.appId,
-            ...req.body
+            sender_id: msg.senderId,
+            content: msg.content,
+            timestamp: msg.timestamp,
+            is_ai: msg.isAi || false
         });
         if (error) throw error;
         res.json({ success: true });
@@ -144,9 +218,13 @@ app.post('/api/db/messages/:appId', async (req, res) => {
 
 app.put('/api/db/messages/:appId/:msgId', async (req, res) => {
     try {
+        const update: any = {};
+        if (req.body.content) update.content = req.body.content;
+        if (req.body.isAi !== undefined) update.is_ai = req.body.isAi;
+
         const { error } = await supabase
             .from('messages')
-            .update(req.body)
+            .update(update)
             .eq('id', req.params.msgId);
         if (error) throw error;
         res.json({ success: true });
