@@ -49,47 +49,109 @@ import { AIHeadhunter } from './components/AIHeadhunter';
 import { AIVoiceInterview } from './components/AIVoiceInterview';
 
 // --- API helpers ---
+const API_TIMEOUT = 8000; // 8 second timeout for DB calls
+
+// --- localStorage fallback helpers ---
+const LOCAL_PROFILES_KEY = 'hirely_profiles';
+const LOCAL_APPS_KEY = 'hirely_applications';
+
+function getLocalProfiles(): Record<string, UserProfile> {
+  try {
+    return JSON.parse(localStorage.getItem(LOCAL_PROFILES_KEY) || '{}');
+  } catch { return {}; }
+}
+
+function saveLocalProfile(profile: UserProfile) {
+  const profiles = getLocalProfiles();
+  profiles[profile.uid] = profile;
+  localStorage.setItem(LOCAL_PROFILES_KEY, JSON.stringify(profiles));
+}
+
+function getLocalApplications(): Application[] {
+  try {
+    return JSON.parse(localStorage.getItem(LOCAL_APPS_KEY) || '[]');
+  } catch { return []; }
+}
+
+function saveLocalApplications(apps: Application[]) {
+  localStorage.setItem(LOCAL_APPS_KEY, JSON.stringify(apps));
+}
+
 async function apiGetStoredProfile(uid: string): Promise<UserProfile | null> {
   try {
-    const res = await fetch(`/api/db/profiles/${uid}`);
-    if (!res.ok) return null;
-    return await res.json();
-  } catch { return null; }
+    const res = await fetch(`/api/db/profiles/${uid}`, { signal: AbortSignal.timeout(API_TIMEOUT) });
+    if (!res.ok) throw new Error('API error');
+    const profile = await res.json();
+    if (profile) {
+      saveLocalProfile(profile); // cache locally
+      return profile;
+    }
+  } catch { /* MongoDB down — try localStorage */ }
+  // Fallback to localStorage
+  const local = getLocalProfiles();
+  return local[uid] || null;
 }
 
 async function apiSaveProfile(profile: UserProfile) {
+  // Always save to localStorage
+  saveLocalProfile(profile);
   try {
     await fetch('/api/db/profiles', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(profile)
+      body: JSON.stringify(profile),
+      signal: AbortSignal.timeout(API_TIMEOUT)
     });
   } catch (error) {
-    console.error('Failed to save profile:', error);
+    console.warn('MongoDB unavailable — profile saved to localStorage only');
   }
 }
 
 async function apiGetStoredApplications(): Promise<Application[]> {
+  const localApps = getLocalApplications();
   try {
-    const res = await fetch('/api/db/applications');
-    return await res.json();
-  } catch { return []; }
+    const res = await fetch('/api/db/applications', { signal: AbortSignal.timeout(API_TIMEOUT) });
+    if (!res.ok) return localApps;
+    const dbApps: Application[] = await res.json();
+    // Merge: DB apps + local apps not in DB
+    const dbIds = new Set(dbApps.map(a => a.id));
+    const merged = [...dbApps, ...localApps.filter(a => !dbIds.has(a.id))];
+    return merged;
+  } catch {
+    return localApps;
+  }
 }
 
 async function apiAddApplication(app: Application) {
-  await fetch('/api/db/applications', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(app)
-  });
+  // Always save to localStorage
+  const localApps = getLocalApplications();
+  saveLocalApplications([...localApps, app]);
+  try {
+    await fetch('/api/db/applications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(app),
+      signal: AbortSignal.timeout(API_TIMEOUT)
+    });
+  } catch {
+    console.warn('MongoDB unavailable — application saved to localStorage only');
+  }
 }
 
 async function apiUpdateApplicationStatus(id: string, status: string) {
-  await fetch(`/api/db/applications/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status })
-  });
+  // Update in localStorage
+  const localApps = getLocalApplications();
+  saveLocalApplications(localApps.map(a => a.id === id ? { ...a, status: status as Application['status'] } : a));
+  try {
+    await fetch(`/api/db/applications/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+      signal: AbortSignal.timeout(API_TIMEOUT)
+    });
+  } catch {
+    console.warn('MongoDB unavailable — status updated in localStorage only');
+  }
 }
 
 // --- Custom Hooks ---
@@ -104,25 +166,63 @@ function useDebounce<T>(value: T, delay: number): T {
   return debouncedValue;
 }
 
-async function apiGetStoredJobs(): Promise<Job[]> {
+// --- localStorage helpers for job fallback ---
+const LOCAL_JOBS_KEY = 'hirely_posted_jobs';
+
+function getLocalJobs(): Job[] {
   try {
-    const res = await fetch('/api/db/jobs');
-    return await res.json();
+    return JSON.parse(localStorage.getItem(LOCAL_JOBS_KEY) || '[]');
   } catch { return []; }
 }
 
+function saveLocalJobs(jobs: Job[]) {
+  localStorage.setItem(LOCAL_JOBS_KEY, JSON.stringify(jobs));
+}
+
+async function apiGetStoredJobs(): Promise<Job[]> {
+  const localJobs = getLocalJobs();
+  try {
+    const res = await fetch('/api/db/jobs', { signal: AbortSignal.timeout(API_TIMEOUT) });
+    if (!res.ok) return localJobs;
+    const dbJobs: Job[] = await res.json();
+    // Merge: DB jobs + any local jobs not in DB (deduped by id)
+    const dbIds = new Set(dbJobs.map(j => j.id));
+    const merged = [...dbJobs, ...localJobs.filter(j => !dbIds.has(j.id))];
+    return merged;
+  } catch {
+    return localJobs; // MongoDB down — return localStorage jobs
+  }
+}
+
 async function apiAddPostedJob(job: Job) {
-  await fetch('/api/db/jobs', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(job)
-  });
+  // Always save to localStorage as backup
+  const localJobs = getLocalJobs();
+  saveLocalJobs([...localJobs, job]);
+  // Also try MongoDB
+  try {
+    await fetch('/api/db/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(job),
+      signal: AbortSignal.timeout(API_TIMEOUT)
+    });
+  } catch {
+    console.warn('MongoDB unavailable — job saved to localStorage only');
+  }
 }
 
 async function apiDeletePostedJob(jobId: string) {
-  await fetch(`/api/db/jobs/${jobId}`, {
-    method: 'DELETE'
-  });
+  // Remove from localStorage
+  saveLocalJobs(getLocalJobs().filter(j => j.id !== jobId));
+  // Also try MongoDB
+  try {
+    await fetch(`/api/db/jobs/${jobId}`, {
+      method: 'DELETE',
+      signal: AbortSignal.timeout(API_TIMEOUT)
+    });
+  } catch {
+    console.warn('MongoDB unavailable — job deleted from localStorage only');
+  }
 }
 import { ChatModal } from './components/ChatModal';
 
@@ -749,9 +849,6 @@ const JobsPage = ({ userProfile, setActivePage, initialSearch = '' }: { userProf
     const fetchJobsAndApps = async () => {
       setLoading(true);
       try {
-        // Load posted jobs from localStorage
-        const postedJobs = await apiGetStoredJobs();
-
         // Determine dynamic query based on active category and search
         let dynamicQuery = '';
         if (debouncedSearch) {
@@ -762,17 +859,26 @@ const JobsPage = ({ userProfile, setActivePage, initialSearch = '' }: { userProf
           dynamicQuery = 'Developer OR Internship India';
         }
 
-        // Fetch external jobs with dynamic query
-        const externalJobs = await fetchExternalJobs(dynamicQuery.trim());
+        // Fetch posted jobs and external jobs IN PARALLEL
+        // so MongoDB timeout doesn't block external results
+        const [postedJobsResult, externalJobsResult] = await Promise.allSettled([
+          apiGetStoredJobs(),
+          fetchExternalJobs(dynamicQuery.trim())
+        ]);
+
+        const postedJobs = postedJobsResult.status === 'fulfilled' ? postedJobsResult.value : [];
+        const externalJobs = externalJobsResult.status === 'fulfilled' ? externalJobsResult.value : [];
 
         setAllJobs([...postedJobs, ...externalJobs]);
 
         if (userProfile?.role === 'candidate') {
-          const allApps = await apiGetStoredApplications();
-          const appliedIds = allApps
-            .filter(app => app.candidateId === userProfile.uid)
-            .map(app => app.jobId);
-          setAppliedJobs(appliedIds);
+          try {
+            const allApps = await apiGetStoredApplications();
+            const appliedIds = allApps
+              .filter(app => app.candidateId === userProfile.uid)
+              .map(app => app.jobId);
+            setAppliedJobs(appliedIds);
+          } catch { /* ignore - MongoDB may be down */ }
         }
       } catch (error) {
         console.error("Error fetching jobs:", error);
@@ -871,13 +977,10 @@ const JobsPage = ({ userProfile, setActivePage, initialSearch = '' }: { userProf
     }
   };
 
-  const filteredJobs = allJobs.filter(j =>
-    (category === 'All' || j.category === category) &&
-    (j.title.toLowerCase().includes(search.toLowerCase()) ||
-      j.company.toLowerCase().includes(search.toLowerCase()) ||
-      j.description.toLowerCase().includes(search.toLowerCase()) ||
-      j.location.toLowerCase().includes(search.toLowerCase()))
-  );
+  // Filter by category only (server already handles search query filtering)
+  const filteredJobs = category === 'All'
+    ? allJobs
+    : allJobs.filter(j => j.category === category);
 
   const categories = ['All', 'Engineering', 'Design', 'Marketing', 'Sales', 'Product'];
 
@@ -1214,10 +1317,15 @@ const JobSeekerDashboard = ({ userProfile, setActivePage }: { userProfile: UserP
 
   useEffect(() => {
     const fetchApps = async () => {
-      const allApps = await apiGetStoredApplications();
-      const myApps = allApps.filter(app => app.candidateId === userProfile.uid);
-      setApplications(myApps);
-      setLoading(false);
+      try {
+        const allApps = await apiGetStoredApplications();
+        const myApps = allApps.filter(app => app.candidateId === userProfile.uid);
+        setApplications(myApps);
+      } catch (error) {
+        console.error('Failed to load applications:', error);
+      } finally {
+        setLoading(false);
+      }
     };
     fetchApps();
   }, [userProfile.uid]);
@@ -1423,15 +1531,20 @@ const EmployerDashboard = ({ userProfile }: { userProfile: UserProfile }) => {
 
   useEffect(() => {
     const fetchEmployerData = async () => {
-      // Load employer jobs and applications from API
-      const allJobs = await apiGetStoredJobs();
-      const myJobs = allJobs.filter(job => job.employerId === userProfile.uid);
-      setEmployerJobs(myJobs);
+      try {
+        // Load employer jobs and applications from API
+        const allJobs = await apiGetStoredJobs();
+        const myJobs = allJobs.filter(job => job.employerId === userProfile.uid);
+        setEmployerJobs(myJobs);
 
-      const allApps = await apiGetStoredApplications();
-      const myApps = allApps.filter(app => app.employerId === userProfile.uid);
-      setApplications(myApps);
-      setLoading(false);
+        const allApps = await apiGetStoredApplications();
+        const myApps = allApps.filter(app => app.employerId === userProfile.uid);
+        setApplications(myApps);
+      } catch (error) {
+        console.error('Failed to load employer data:', error);
+      } finally {
+        setLoading(false);
+      }
     };
     fetchEmployerData();
   }, [userProfile.uid]);
@@ -1593,9 +1706,7 @@ const EmployerDashboard = ({ userProfile }: { userProfile: UserProfile }) => {
               </div>
             )}
 
-            <div className="mt-12">
-              <AIHeadhunter currentUser={userProfile} />
-            </div>
+
           </div>
 
           <div>

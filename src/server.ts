@@ -25,132 +25,134 @@ app.use((_req, res, next) => {
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// --- MongoDB Connection ---
-import { MongoClient, Db } from 'mongodb';
+// --- Supabase Connection ---
+import { createClient } from '@supabase/supabase-js';
 
-const MONGODB_URI = process.env.MONGODB_URI || '';
-let cachedDb: Db | null = null;
-let clientPromise: Promise<MongoClient> | null = null;
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
 
-async function connectMongo(): Promise<Db> {
-    if (cachedDb) return cachedDb;
-
-    if (!MONGODB_URI) {
-        throw new Error('❌ MONGODB_URI is missing from .env file');
-    }
-
-    if (!clientPromise) {
-        const client = new MongoClient(MONGODB_URI);
-        clientPromise = client.connect();
-    }
-
-    const client = await clientPromise;
-    cachedDb = client.db('hirely');
-    return cachedDb;
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    console.warn('⚠️  Supabase environment variables are missing. DB features will be limited.');
 }
 
-// Helper to get a collection safely (awaits connection)
-async function col(name: string) {
-    const db = await connectMongo();
-    return db.collection(name);
-}
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
 
 // --- Local JSON DB Endpoints (now backed by MongoDB) ---
+
+// --- Supabase-backed Endpoints ---
 
 // JOBS
 app.get('/api/db/jobs', async (_req, res) => {
     try {
-        const jobs = await (await col('jobs')).find({}).sort({ _id: -1 }).toArray();
-        res.json(jobs);
-    } catch (e) { res.status(500).json({ error: 'DB error' }); }
+        const { data, error } = await supabase.from('jobs').select('*').order('created_at', { ascending: false });
+        if (error) throw error;
+        res.json(data || []);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/db/jobs', async (req, res) => {
     try {
-        await (await col('jobs')).insertOne(req.body);
+        const { error } = await supabase.from('jobs').upsert(req.body);
+        if (error) throw error;
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: 'DB error' }); }
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/db/jobs/:id', async (req, res) => {
     try {
-        await (await col('jobs')).deleteOne({ id: req.params.id });
+        const { error } = await supabase.from('jobs').delete().eq('id', req.params.id);
+        if (error) throw error;
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: 'DB error' }); }
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 // APPLICATIONS
 app.get('/api/db/applications', async (_req, res) => {
     try {
-        const apps = await (await col('applications')).find({}).sort({ appliedAt: -1 }).toArray();
-        res.json(apps);
-    } catch (e) { res.status(500).json({ error: 'DB error' }); }
+        const { data, error } = await supabase.from('applications').select('*').order('applied_at', { ascending: false });
+        if (error) throw error;
+        res.json(data || []);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/db/applications', async (req, res) => {
     try {
-        await (await col('applications')).insertOne(req.body);
+        const { error } = await supabase.from('applications').upsert(req.body);
+        if (error) throw error;
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: 'DB error' }); }
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/db/applications/:id', async (req, res) => {
     try {
-        await (await col('applications')).updateOne({ id: req.params.id }, { $set: req.body });
+        const { error } = await supabase.from('applications').update(req.body).eq('id', req.params.id);
+        if (error) throw error;
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: 'DB error' }); }
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 // PROFILES
 app.get('/api/db/profiles', async (_req, res) => {
     try {
-        const profiles = await (await col('profiles')).find({}).toArray();
-        res.json(profiles);
-    } catch (e) { res.status(500).json({ error: 'DB error' }); }
+        const { data, error } = await supabase.from('profiles').select('*');
+        if (error) throw error;
+        res.json(data || []);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/db/profiles/:uid', async (req, res) => {
     try {
-        const profile = await (await col('profiles')).findOne({ uid: req.params.uid });
-        res.json(profile || null);
-    } catch (e) { res.status(500).json({ error: 'DB error' }); }
+        const { data, error } = await supabase.from('profiles').select('*').eq('uid', req.params.uid).maybeSingle();
+        if (error) throw error;
+        res.json(data || null);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/db/profiles', async (req, res) => {
     try {
-        await (await col('profiles')).replaceOne({ uid: req.body.uid }, req.body, { upsert: true });
+        const { error } = await supabase.from('profiles').upsert(req.body);
+        if (error) throw error;
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: 'DB error' }); }
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 // MESSAGES
 app.get('/api/db/messages/:appId', async (req, res) => {
     try {
-        const doc = await (await col('messages')).findOne({ appId: req.params.appId });
-        res.json(doc?.messages || []);
-    } catch (e) { res.status(500).json({ error: 'DB error' }); }
+        const { data, error } = await supabase
+            .from('messages')
+            .select('*')
+            .eq('application_id', req.params.appId)
+            .order('timestamp', { ascending: true });
+        if (error) throw error;
+        res.json(data || []);
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/db/messages/:appId', async (req, res) => {
     try {
-        await (await col('messages')).updateOne(
-            { appId: req.params.appId },
-            { $push: { messages: req.body } as any },
-            { upsert: true }
-        );
+        const { error } = await supabase.from('messages').insert({
+            application_id: req.params.appId,
+            ...req.body
+        });
+        if (error) throw error;
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: 'DB error' }); }
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
+
 
 app.put('/api/db/messages/:appId/:msgId', async (req, res) => {
     try {
-        await (await col('messages')).updateOne(
-            { appId: req.params.appId, 'messages.id': req.params.msgId },
-            { $set: { 'messages.$': { ...req.body } } }
-        );
+        const { error } = await supabase
+            .from('messages')
+            .update(req.body)
+            .eq('id', req.params.msgId);
+        if (error) throw error;
         res.json({ success: true });
-    } catch (e) { res.status(500).json({ error: 'DB error' }); }
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
+
 
 // --- Google Jobs via SerpApi ---
 app.get('/api/jobs/search', async (req, res) => {
@@ -300,7 +302,7 @@ app.get('/api/jobs/adzuna', async (req, res) => {
 
 // Health check
 app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', serpApiConfigured: !!SERPAPI_KEY, mongodb: !!cachedDb });
+    res.json({ status: 'ok', serpApiConfigured: !!SERPAPI_KEY, supabaseConfigured: !!SUPABASE_URL });
 });
 
 // --- AI Chatbot ---
@@ -439,19 +441,12 @@ export default app;
 
 // Start server locally
 if (process.env.NODE_ENV !== 'production' || process.env.VERCEL !== '1') {
-    connectMongo().then(() => {
-        app.listen(PORT, () => {
-            console.log(`\n🚀 Hirely Backend Server running at http://localhost:${PORT}`);
-            console.log(`📡 SerpApi endpoint: http://localhost:${PORT}/api/jobs/search?q=developer&location=India`);
-            console.log(`🍃 Adzuna endpoint: http://localhost:${PORT}/api/jobs/adzuna?q=developer`);
-            console.log(`❤️  Health check: http://localhost:${PORT}/api/health\n`);
-        });
-    }).catch(err => {
-        console.error('❌ Failed to connect to MongoDB:', err);
-        process.exit(1);
+    app.listen(PORT, () => {
+        console.log(`\n🚀 Hirely Backend Server running at http://localhost:${PORT}`);
+        console.log(`📡 SerpApi endpoint: http://localhost:${PORT}/api/jobs/search?q=developer&location=India`);
+        console.log(`🍃 Adzuna endpoint: http://localhost:${PORT}/api/jobs/adzuna?q=developer`);
+        console.log(`❤️  Health check: http://localhost:${PORT}/api/health\n`);
     });
-} else {
-    // In serverless, just connect to Mongo when a request comes in if not already connected
-    // This connects immediately for Vercel's boot process
-    connectMongo().catch(console.error);
 }
+
+
