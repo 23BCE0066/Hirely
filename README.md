@@ -2,19 +2,23 @@
 <img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
 </div>
 
-# Run and deploy your AI Studio app
+# Hirely
+A modern, AI-powered job portal built with React, Node.js, Express, MongoDB, and Gemini-powered features.
 
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/54a4933a-4c33-42e4-baac-2688d6cb0b66
+This project includes:
+- AI Headhunter for recruiters
+- Real-Time conversational AI Mock interviews
+- Global job persistence with MongoDB Atlas
+- Integrations with SerpApi and Adzuna APIs
 
 ## Run Locally
 
-**Prerequisites:**  Node.js
-
+**Prerequisites:** Node.js
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. Set the `GEMINI_API_KEY` and other credentials in `.env`
+3. Start the Vite React app:
    `npm run dev`
+4. Start the Express backend:
+   `npm run server`
