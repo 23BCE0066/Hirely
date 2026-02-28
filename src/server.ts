@@ -29,22 +29,30 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 import { MongoClient, Db } from 'mongodb';
 
 const MONGODB_URI = process.env.MONGODB_URI || '';
-let mongoDb: Db;
+let cachedDb: Db | null = null;
+let clientPromise: Promise<MongoClient> | null = null;
 
-async function connectMongo() {
+async function connectMongo(): Promise<Db> {
+    if (cachedDb) return cachedDb;
+
     if (!MONGODB_URI) {
-        console.error('❌ MONGODB_URI is missing from .env file');
-        process.exit(1);
+        throw new Error('❌ MONGODB_URI is missing from .env file');
     }
-    const client = new MongoClient(MONGODB_URI);
-    await client.connect();
-    mongoDb = client.db('hirely');
-    console.log('✅ Connected to MongoDB Atlas (hirely database)');
+
+    if (!clientPromise) {
+        const client = new MongoClient(MONGODB_URI);
+        clientPromise = client.connect();
+    }
+
+    const client = await clientPromise;
+    cachedDb = client.db('hirely');
+    return cachedDb;
 }
 
-// Helper to get a collection safely
-function col(name: string) {
-    return mongoDb.collection(name);
+// Helper to get a collection safely (awaits connection)
+async function col(name: string) {
+    const db = await connectMongo();
+    return db.collection(name);
 }
 
 // --- Local JSON DB Endpoints (now backed by MongoDB) ---
@@ -52,21 +60,21 @@ function col(name: string) {
 // JOBS
 app.get('/api/db/jobs', async (_req, res) => {
     try {
-        const jobs = await col('jobs').find({}).sort({ _id: -1 }).toArray();
+        const jobs = await (await col('jobs')).find({}).sort({ _id: -1 }).toArray();
         res.json(jobs);
     } catch (e) { res.status(500).json({ error: 'DB error' }); }
 });
 
 app.post('/api/db/jobs', async (req, res) => {
     try {
-        await col('jobs').insertOne(req.body);
+        await (await col('jobs')).insertOne(req.body);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: 'DB error' }); }
 });
 
 app.delete('/api/db/jobs/:id', async (req, res) => {
     try {
-        await col('jobs').deleteOne({ id: req.params.id });
+        await (await col('jobs')).deleteOne({ id: req.params.id });
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: 'DB error' }); }
 });
@@ -74,21 +82,21 @@ app.delete('/api/db/jobs/:id', async (req, res) => {
 // APPLICATIONS
 app.get('/api/db/applications', async (_req, res) => {
     try {
-        const apps = await col('applications').find({}).sort({ appliedAt: -1 }).toArray();
+        const apps = await (await col('applications')).find({}).sort({ appliedAt: -1 }).toArray();
         res.json(apps);
     } catch (e) { res.status(500).json({ error: 'DB error' }); }
 });
 
 app.post('/api/db/applications', async (req, res) => {
     try {
-        await col('applications').insertOne(req.body);
+        await (await col('applications')).insertOne(req.body);
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: 'DB error' }); }
 });
 
 app.put('/api/db/applications/:id', async (req, res) => {
     try {
-        await col('applications').updateOne({ id: req.params.id }, { $set: req.body });
+        await (await col('applications')).updateOne({ id: req.params.id }, { $set: req.body });
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: 'DB error' }); }
 });
@@ -96,21 +104,21 @@ app.put('/api/db/applications/:id', async (req, res) => {
 // PROFILES
 app.get('/api/db/profiles', async (_req, res) => {
     try {
-        const profiles = await col('profiles').find({}).toArray();
+        const profiles = await (await col('profiles')).find({}).toArray();
         res.json(profiles);
     } catch (e) { res.status(500).json({ error: 'DB error' }); }
 });
 
 app.get('/api/db/profiles/:uid', async (req, res) => {
     try {
-        const profile = await col('profiles').findOne({ uid: req.params.uid });
+        const profile = await (await col('profiles')).findOne({ uid: req.params.uid });
         res.json(profile || null);
     } catch (e) { res.status(500).json({ error: 'DB error' }); }
 });
 
 app.post('/api/db/profiles', async (req, res) => {
     try {
-        await col('profiles').replaceOne({ uid: req.body.uid }, req.body, { upsert: true });
+        await (await col('profiles')).replaceOne({ uid: req.body.uid }, req.body, { upsert: true });
         res.json({ success: true });
     } catch (e) { res.status(500).json({ error: 'DB error' }); }
 });
@@ -118,14 +126,14 @@ app.post('/api/db/profiles', async (req, res) => {
 // MESSAGES
 app.get('/api/db/messages/:appId', async (req, res) => {
     try {
-        const doc = await col('messages').findOne({ appId: req.params.appId });
+        const doc = await (await col('messages')).findOne({ appId: req.params.appId });
         res.json(doc?.messages || []);
     } catch (e) { res.status(500).json({ error: 'DB error' }); }
 });
 
 app.post('/api/db/messages/:appId', async (req, res) => {
     try {
-        await col('messages').updateOne(
+        await (await col('messages')).updateOne(
             { appId: req.params.appId },
             { $push: { messages: req.body } as any },
             { upsert: true }
@@ -136,7 +144,7 @@ app.post('/api/db/messages/:appId', async (req, res) => {
 
 app.put('/api/db/messages/:appId/:msgId', async (req, res) => {
     try {
-        await col('messages').updateOne(
+        await (await col('messages')).updateOne(
             { appId: req.params.appId, 'messages.id': req.params.msgId },
             { $set: { 'messages.$': { ...req.body } } }
         );
@@ -292,7 +300,7 @@ app.get('/api/jobs/adzuna', async (req, res) => {
 
 // Health check
 app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', serpApiConfigured: !!SERPAPI_KEY, mongodb: !!mongoDb });
+    res.json({ status: 'ok', serpApiConfigured: !!SERPAPI_KEY, mongodb: !!cachedDb });
 });
 
 // --- AI Chatbot ---
