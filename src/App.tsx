@@ -45,28 +45,42 @@ import { useUser, useAuth, SignIn, SignUp, UserButton, useClerk } from '@clerk/c
 import { UserProfile, Application } from './types';
 import { fetchExternalJobs } from './services/jobApi';
 import { Chatbot } from './components/Chatbot';
+import { AIHeadhunter } from './components/AIHeadhunter';
+import { AIVoiceInterview } from './components/AIVoiceInterview';
 
-// --- localStorage helpers ---
-function getStoredProfile(uid: string): UserProfile | null {
+// --- API helpers ---
+async function apiGetStoredProfile(uid: string): Promise<UserProfile | null> {
   try {
     const data = localStorage.getItem(`hirely_profile_${uid}`);
     return data ? JSON.parse(data) : null;
   } catch { return null; }
 }
 
-function saveProfile(profile: UserProfile) {
+async function apiSaveProfile(profile: UserProfile) {
   localStorage.setItem(`hirely_profile_${profile.uid}`, JSON.stringify(profile));
 }
 
-function getStoredApplications(): Application[] {
+async function apiGetStoredApplications(): Promise<Application[]> {
   try {
-    const data = localStorage.getItem('hirely_applications');
-    return data ? JSON.parse(data) : [];
+    const res = await fetch('/api/db/applications');
+    return await res.json();
   } catch { return []; }
 }
 
-function saveApplications(apps: Application[]) {
-  localStorage.setItem('hirely_applications', JSON.stringify(apps));
+async function apiAddApplication(app: Application) {
+  await fetch('/api/db/applications', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(app)
+  });
+}
+
+async function apiUpdateApplicationStatus(id: string, status: string) {
+  await fetch(`/api/db/applications/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status })
+  });
 }
 
 // --- Custom Hooks ---
@@ -81,15 +95,25 @@ function useDebounce<T>(value: T, delay: number): T {
   return debouncedValue;
 }
 
-function getStoredJobs(): Job[] {
+async function apiGetStoredJobs(): Promise<Job[]> {
   try {
-    const data = localStorage.getItem('hirely_posted_jobs');
-    return data ? JSON.parse(data) : [];
+    const res = await fetch('/api/db/jobs');
+    return await res.json();
   } catch { return []; }
 }
 
-function savePostedJobs(jobsList: Job[]) {
-  localStorage.setItem('hirely_posted_jobs', JSON.stringify(jobsList));
+async function apiAddPostedJob(job: Job) {
+  await fetch('/api/db/jobs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(job)
+  });
+}
+
+async function apiDeletePostedJob(jobId: string) {
+  await fetch(`/api/db/jobs/${jobId}`, {
+    method: 'DELETE'
+  });
 }
 import { ChatModal } from './components/ChatModal';
 
@@ -717,7 +741,7 @@ const JobsPage = ({ userProfile, setActivePage, initialSearch = '' }: { userProf
       setLoading(true);
       try {
         // Load posted jobs from localStorage
-        const postedJobs = getStoredJobs();
+        const postedJobs = await apiGetStoredJobs();
 
         // Determine dynamic query based on active category and search
         let dynamicQuery = '';
@@ -735,7 +759,7 @@ const JobsPage = ({ userProfile, setActivePage, initialSearch = '' }: { userProf
         setAllJobs([...postedJobs, ...externalJobs]);
 
         if (userProfile?.role === 'candidate') {
-          const allApps = getStoredApplications();
+          const allApps = await apiGetStoredApplications();
           const appliedIds = allApps
             .filter(app => app.candidateId === userProfile.uid)
             .map(app => app.jobId);
@@ -751,7 +775,7 @@ const JobsPage = ({ userProfile, setActivePage, initialSearch = '' }: { userProf
   }, [userProfile, debouncedSearch, category]);
 
 
-  const confirmExternalApplication = () => {
+  const confirmExternalApplication = async () => {
     if (!externalApplyModalJob || !userProfile) return;
     try {
       const newApp: Application = {
@@ -765,9 +789,7 @@ const JobsPage = ({ userProfile, setActivePage, initialSearch = '' }: { userProf
         status: 'pending',
         resumeUrl: ''
       };
-      const allApps = getStoredApplications();
-      allApps.push(newApp);
-      saveApplications(allApps);
+      await apiAddApplication(newApp);
       setAppliedJobs([...appliedJobs, externalApplyModalJob.id]);
     } catch (error) {
       console.error("Error confirming apply:", error);
@@ -802,8 +824,14 @@ const JobsPage = ({ userProfile, setActivePage, initialSearch = '' }: { userProf
     try {
       let resumeUrl = '';
       if (resumeFile) {
-        // Store resume filename (actual file upload requires a backend)
-        resumeUrl = `local://${resumeFile.name}`;
+        // Convert resume to base64
+        const fileData = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(resumeFile);
+        });
+        resumeUrl = fileData;
       }
 
       const newApp: Application = {
@@ -817,9 +845,7 @@ const JobsPage = ({ userProfile, setActivePage, initialSearch = '' }: { userProf
         status: 'pending',
         resumeUrl
       };
-      const allApps = getStoredApplications();
-      allApps.push(newApp);
-      saveApplications(allApps);
+      await apiAddApplication(newApp);
       setAppliedJobs([...appliedJobs, job.id]);
 
       if (resumeFile) {
@@ -1178,11 +1204,13 @@ const JobSeekerDashboard = ({ userProfile, setActivePage }: { userProfile: UserP
   const [externalApplyModalJob, setExternalApplyModalJob] = useState<Job | null>(null);
 
   useEffect(() => {
-    // Load applications from localStorage
-    const allApps = getStoredApplications();
-    const myApps = allApps.filter(app => app.candidateId === userProfile.uid);
-    setApplications(myApps);
-    setLoading(false);
+    const fetchApps = async () => {
+      const allApps = await apiGetStoredApplications();
+      const myApps = allApps.filter(app => app.candidateId === userProfile.uid);
+      setApplications(myApps);
+      setLoading(false);
+    };
+    fetchApps();
   }, [userProfile.uid]);
 
   useEffect(() => {
@@ -1207,7 +1235,7 @@ const JobSeekerDashboard = ({ userProfile, setActivePage }: { userProfile: UserP
     }
   };
 
-  const confirmExternalApplication = () => {
+  const confirmExternalApplication = async () => {
     if (!externalApplyModalJob) return;
     try {
       const newApp: Application = {
@@ -1220,9 +1248,7 @@ const JobSeekerDashboard = ({ userProfile, setActivePage }: { userProfile: UserP
         appliedAt: Date.now(),
         status: 'pending'
       };
-      const allApps = getStoredApplications();
-      allApps.push(newApp);
-      saveApplications(allApps);
+      await apiAddApplication(newApp);
       setApplications([...applications, newApp]);
     } catch (error) {
       console.error("Error confirming apply:", error);
@@ -1369,6 +1395,8 @@ const JobSeekerDashboard = ({ userProfile, setActivePage }: { userProfile: UserP
             onClose={() => setSelectedChatApp(null)}
           />
         )}
+
+        <AIVoiceInterview currentUser={userProfile} />
       </div>
     </div>
   );
@@ -1385,15 +1413,18 @@ const EmployerDashboard = ({ userProfile }: { userProfile: UserProfile }) => {
   const [selectedChatApp, setSelectedChatApp] = useState<Application | null>(null);
 
   useEffect(() => {
-    // Load employer jobs and applications from localStorage
-    const allJobs = getStoredJobs();
-    const myJobs = allJobs.filter(job => job.employerId === userProfile.uid);
-    setEmployerJobs(myJobs);
+    const fetchEmployerData = async () => {
+      // Load employer jobs and applications from API
+      const allJobs = await apiGetStoredJobs();
+      const myJobs = allJobs.filter(job => job.employerId === userProfile.uid);
+      setEmployerJobs(myJobs);
 
-    const allApps = getStoredApplications();
-    const myApps = allApps.filter(app => app.employerId === userProfile.uid);
-    setApplications(myApps);
-    setLoading(false);
+      const allApps = await apiGetStoredApplications();
+      const myApps = allApps.filter(app => app.employerId === userProfile.uid);
+      setApplications(myApps);
+      setLoading(false);
+    };
+    fetchEmployerData();
   }, [userProfile.uid]);
 
   const handleCreateJob = async (e: React.FormEvent) => {
@@ -1402,8 +1433,14 @@ const EmployerDashboard = ({ userProfile }: { userProfile: UserProfile }) => {
     try {
       let documentUrl = '';
       if (jobDocFile) {
-        // Store filename reference (actual upload requires a backend)
-        documentUrl = `local://${jobDocFile.name}`;
+        // Convert to base64
+        const fileData = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(jobDocFile);
+        });
+        documentUrl = fileData;
       }
 
       const jobId = 'job_' + Date.now().toString() + Math.random().toString(36).substring(2, 9);
@@ -1416,9 +1453,7 @@ const EmployerDashboard = ({ userProfile }: { userProfile: UserProfile }) => {
         documentUrl
       } as Job;
 
-      const allJobs = getStoredJobs();
-      allJobs.push(jobData);
-      savePostedJobs(allJobs);
+      await apiAddPostedJob(jobData);
 
       setEmployerJobs([...employerJobs, jobData]);
       setShowCreateJob(false);
@@ -1432,11 +1467,20 @@ const EmployerDashboard = ({ userProfile }: { userProfile: UserProfile }) => {
     }
   };
 
-  const updateApplicationStatus = (appId: string, newStatus: Application['status']) => {
-    const allApps = getStoredApplications();
-    const updatedAllApps = allApps.map(app => app.id === appId ? { ...app, status: newStatus } : app);
-    saveApplications(updatedAllApps);
+  const updateApplicationStatus = async (appId: string, newStatus: Application['status']) => {
+    await apiUpdateApplicationStatus(appId, newStatus);
     setApplications(applications.map(app => app.id === appId ? { ...app, status: newStatus } : app));
+  };
+
+  const handleDeleteJob = async (jobId: string) => {
+    if (!confirm('Are you sure you want to delete this job post?')) return;
+    try {
+      await apiDeletePostedJob(jobId);
+      setEmployerJobs(employerJobs.filter(j => j.id !== jobId));
+    } catch (error) {
+      console.error("Failed to delete job:", error);
+      alert("Failed to delete the job. Please try again.");
+    }
   };
 
   return (
@@ -1517,11 +1561,16 @@ const EmployerDashboard = ({ userProfile }: { userProfile: UserProfile }) => {
                   <div key={job.id} className="bg-white p-6 rounded-2xl border border-slate-100 shadow-sm">
                     <div className="flex justify-between items-start mb-2">
                       <h3 className="font-bold text-slate-900 text-lg">{job.title}</h3>
-                      {job.documentUrl && (
-                        <a href={job.documentUrl} target="_blank" rel="noreferrer" className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-md hover:bg-indigo-100">
-                          View Doc
-                        </a>
-                      )}
+                      <div className="flex gap-2">
+                        {job.documentUrl && (
+                          <a href={job.documentUrl} target="_blank" rel="noreferrer" className="text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-md hover:bg-indigo-100">
+                            View Doc
+                          </a>
+                        )}
+                        <button onClick={() => handleDeleteJob(job.id)} className="text-xs font-bold text-rose-600 bg-rose-50 px-2 py-1 rounded-md hover:bg-rose-100 transition-colors">
+                          Delete
+                        </button>
+                      </div>
                     </div>
                     <p className="text-slate-500 text-sm mb-4">{job.location} • {job.salary}</p>
                     <div className="flex justify-between items-center text-sm">
@@ -1534,6 +1583,10 @@ const EmployerDashboard = ({ userProfile }: { userProfile: UserProfile }) => {
                 ))}
               </div>
             )}
+
+            <div className="mt-12">
+              <AIHeadhunter currentUser={userProfile} />
+            </div>
           </div>
 
           <div>
@@ -1590,7 +1643,7 @@ const EmployerDashboard = ({ userProfile }: { userProfile: UserProfile }) => {
           />
         )}
       </div>
-    </div>
+    </div >
   );
 };
 
@@ -2162,31 +2215,34 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (isLoaded) {
-      if (isSignedIn && user) {
-        setCheckingProfile(true);
-        // Try to load profile from localStorage
-        const existingProfile = getStoredProfile(user.id);
-        if (existingProfile) {
-          setUserProfile(existingProfile);
+    const fetchProfile = async () => {
+      if (isLoaded) {
+        if (isSignedIn && user) {
+          setCheckingProfile(true);
+          // Try to load profile from API
+          const existingProfile = await apiGetStoredProfile(user.id);
+          if (existingProfile) {
+            setUserProfile(existingProfile);
+          } else {
+            // Create a new profile
+            const intendedRole = (localStorage.getItem('intendedRole') as 'candidate' | 'recruiter') || 'candidate';
+            const newProfile: UserProfile = {
+              uid: user.id,
+              email: user.primaryEmailAddress?.emailAddress || '',
+              name: user.fullName || user.primaryEmailAddress?.emailAddress?.split('@')[0] || 'User',
+              role: intendedRole
+            };
+            await apiSaveProfile(newProfile);
+            setUserProfile(newProfile);
+          }
+          setCheckingProfile(false);
         } else {
-          // Create a new profile
-          const intendedRole = (localStorage.getItem('intendedRole') as 'candidate' | 'recruiter') || 'candidate';
-          const newProfile: UserProfile = {
-            uid: user.id,
-            email: user.primaryEmailAddress?.emailAddress || '',
-            name: user.fullName || user.primaryEmailAddress?.emailAddress?.split('@')[0] || 'User',
-            role: intendedRole
-          };
-          saveProfile(newProfile);
-          setUserProfile(newProfile);
+          setUserProfile(null);
+          setCheckingProfile(false);
         }
-        setCheckingProfile(false);
-      } else {
-        setUserProfile(null);
-        setCheckingProfile(false);
       }
-    }
+    };
+    fetchProfile();
   }, [isSignedIn, user?.id, isLoaded]);
 
   // Scroll to top on page change

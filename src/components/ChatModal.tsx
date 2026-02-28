@@ -9,16 +9,28 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-// localStorage helpers for chat messages
-function getChatMessages(applicationId: string): Message[] {
+// API helpers for chat messages
+async function apiGetChatMessages(applicationId: string): Promise<Message[]> {
   try {
-    const data = localStorage.getItem(`hirely_messages_${applicationId}`);
-    return data ? JSON.parse(data) : [];
+    const res = await fetch(`/api/db/messages/${applicationId}`);
+    return await res.json();
   } catch { return []; }
 }
 
-function saveChatMessages(applicationId: string, messages: Message[]) {
-  localStorage.setItem(`hirely_messages_${applicationId}`, JSON.stringify(messages));
+async function apiAddChatMessage(applicationId: string, message: Message) {
+  await fetch(`/api/db/messages/${applicationId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(message)
+  });
+}
+
+async function apiUpdateVideoCallStatus(applicationId: string, messageId: string, status: 'accepted' | 'rejected') {
+  await fetch(`/api/db/messages/${applicationId}/${messageId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ videoCallStatus: status })
+  });
 }
 
 export const ChatModal = ({ application, currentUser, onClose }: { application: Application, currentUser: UserProfile, onClose: () => void }) => {
@@ -27,10 +39,13 @@ export const ChatModal = ({ application, currentUser, onClose }: { application: 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Load messages from localStorage
-    const stored = getChatMessages(application.id);
-    setMessages(stored);
-    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+    // Load messages from global API
+    const loadMessages = async () => {
+      const stored = await apiGetChatMessages(application.id);
+      setMessages(stored);
+      setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+    };
+    loadMessages();
   }, [application.id]);
 
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -47,7 +62,7 @@ export const ChatModal = ({ application, currentUser, onClose }: { application: 
 
     const updated = [...messages, msg];
     setMessages(updated);
-    saveChatMessages(application.id, updated);
+    await apiAddChatMessage(application.id, msg);
     setNewMessage('');
     setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
   };
@@ -55,7 +70,7 @@ export const ChatModal = ({ application, currentUser, onClose }: { application: 
   const handleVideoCallRequest = async () => {
     const roomName = `hirely-interview-${application.id}-${Date.now()}`;
     const meetUrl = `https://meet.jit.si/${roomName}`;
-    
+
     const msg: Message = {
       id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
       chatId: application.id,
@@ -69,20 +84,20 @@ export const ChatModal = ({ application, currentUser, onClose }: { application: 
 
     const updated = [...messages, msg];
     setMessages(updated);
-    saveChatMessages(application.id, updated);
+    await apiAddChatMessage(application.id, msg);
   };
 
   const updateVideoCallStatus = async (messageId: string, status: 'accepted' | 'rejected') => {
-    const updatedMessages = messages.map(msg => 
+    const updatedMessages = messages.map(msg =>
       msg.id === messageId ? { ...msg, videoCallStatus: status } : msg
     );
     setMessages(updatedMessages);
-    saveChatMessages(application.id, updatedMessages);
+    await apiUpdateVideoCallStatus(application.id, messageId, status);
   };
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         className="bg-white rounded-[2rem] w-full max-w-2xl h-[80vh] flex flex-col shadow-2xl relative overflow-hidden"
@@ -111,7 +126,7 @@ export const ChatModal = ({ application, currentUser, onClose }: { application: 
               <div key={msg.id} className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}>
                 <div className={`max-w-[80%] p-4 rounded-2xl ${isMine ? 'bg-indigo-600 text-white rounded-tr-sm' : 'bg-white border border-slate-100 text-slate-800 rounded-tl-sm shadow-sm'}`}>
                   <p>{msg.text}</p>
-                  
+
                   {msg.isVideoCallRequest && (
                     <div className="mt-4 p-4 bg-white/10 rounded-xl border border-white/20">
                       <div className="flex items-center gap-2 mb-2 font-bold">
@@ -146,11 +161,11 @@ export const ChatModal = ({ application, currentUser, onClose }: { application: 
 
         <div className="p-4 bg-white border-t border-slate-100">
           <form onSubmit={handleSendMessage} className="flex gap-2 relative">
-            <input 
-              type="text" 
+            <input
+              type="text"
               value={newMessage}
               onChange={e => setNewMessage(e.target.value)}
-              placeholder="Type your message..." 
+              placeholder="Type your message..."
               className="flex-1 pl-4 pr-12 py-4 bg-slate-50 rounded-2xl border-none focus:ring-2 focus:ring-indigo-500 outline-none"
             />
             <button type="submit" disabled={!newMessage.trim()} className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 disabled:opacity-50 transition-colors">
