@@ -192,9 +192,12 @@ app.get('/api/db/messages/:appId', async (req, res) => {
             id: db.id,
             applicationId: db.application_id,
             senderId: db.sender_id,
-            content: db.content,
+            text: db.content,
             timestamp: Number(db.timestamp),
-            isAi: db.is_ai
+            isAi: db.is_ai,
+            isVideoCallRequest: db.is_video_call_request,
+            videoCallStatus: db.video_call_status,
+            videoCallUrl: db.video_call_url
         }));
         res.json(msgs);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -204,11 +207,15 @@ app.post('/api/db/messages/:appId', async (req, res) => {
     try {
         const msg = req.body;
         const { error } = await supabase.from('messages').insert({
+            id: msg.id,
             application_id: req.params.appId,
             sender_id: msg.senderId,
-            content: msg.content,
+            content: msg.text,
             timestamp: msg.timestamp,
-            is_ai: msg.isAi || false
+            is_ai: msg.isAi || false,
+            is_video_call_request: msg.isVideoCallRequest || false,
+            video_call_status: msg.videoCallStatus || null,
+            video_call_url: msg.videoCallUrl || null
         });
         if (error) throw error;
         res.json({ success: true });
@@ -218,8 +225,10 @@ app.post('/api/db/messages/:appId', async (req, res) => {
 app.put('/api/db/messages/:appId/:msgId', async (req, res) => {
     try {
         const update: any = {};
-        if (req.body.content) update.content = req.body.content;
+        if (req.body.text) update.content = req.body.text;
         if (req.body.isAi !== undefined) update.is_ai = req.body.isAi;
+        if (req.body.videoCallStatus) update.video_call_status = req.body.videoCallStatus;
+        if (req.body.videoCallUrl) update.video_call_url = req.body.videoCallUrl;
 
         const { error } = await supabase
             .from('messages')
