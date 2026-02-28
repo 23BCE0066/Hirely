@@ -211,6 +211,25 @@ async function apiAddPostedJob(job: Job) {
   }
 }
 
+// Helper for large Base64 files (Resumes/Docs)
+function downloadBase64File(base64Data: string, fileName: string) {
+  try {
+    const link = document.createElement('a');
+    link.href = base64Data;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  } catch (e) {
+    console.error("Download failed:", e);
+    // Fallback: try window.open
+    const win = window.open();
+    if (win) {
+      win.document.write('<iframe src="' + base64Data + '" frameborder="0" style="border:0; top:0px; left:0px; bottom:0px; right:0px; width:100%; height:100%;" allowfullscreen></iframe>');
+    }
+  }
+}
+
 async function apiDeletePostedJob(jobId: string) {
   // Remove from localStorage
   saveLocalJobs(getLocalJobs().filter(j => j.id !== jobId));
@@ -1735,9 +1754,12 @@ const EmployerDashboard = ({ userProfile }: { userProfile: UserProfile }) => {
                     <div className="flex justify-between items-center mt-4">
                       <p className="text-sm text-slate-400">Applied for Job ID: {app.jobId}</p>
                       {app.resumeUrl && (
-                        <a href={app.resumeUrl} target="_blank" rel="noreferrer" className="text-xs font-bold text-indigo-600 hover:underline">
+                        <button
+                          onClick={() => downloadBase64File(app.resumeUrl!, `Resume_${app.candidateName.replace(/\s+/g, '_')}.pdf`)}
+                          className="text-xs font-bold text-indigo-600 hover:underline bg-transparent border-none p-0 cursor-pointer"
+                        >
                           View Resume
-                        </a>
+                        </button>
                       )}
                     </div>
                     <div className="mt-4 pt-4 border-t border-slate-50 flex flex-wrap gap-2">
