@@ -51,13 +51,22 @@ import { AIVoiceInterview } from './components/AIVoiceInterview';
 // --- API helpers ---
 async function apiGetStoredProfile(uid: string): Promise<UserProfile | null> {
   try {
-    const data = localStorage.getItem(`hirely_profile_${uid}`);
-    return data ? JSON.parse(data) : null;
+    const res = await fetch(`/api/db/profiles/${uid}`);
+    if (!res.ok) return null;
+    return await res.json();
   } catch { return null; }
 }
 
 async function apiSaveProfile(profile: UserProfile) {
-  localStorage.setItem(`hirely_profile_${profile.uid}`, JSON.stringify(profile));
+  try {
+    await fetch('/api/db/profiles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(profile)
+    });
+  } catch (error) {
+    console.error('Failed to save profile:', error);
+  }
 }
 
 async function apiGetStoredApplications(): Promise<Application[]> {
@@ -2234,6 +2243,8 @@ export default function App() {
             };
             await apiSaveProfile(newProfile);
             setUserProfile(newProfile);
+            // Clear the intendedRole once it's persisted in the DB
+            localStorage.removeItem('intendedRole');
           }
           setCheckingProfile(false);
         } else {
